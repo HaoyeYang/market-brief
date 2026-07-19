@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q .
+
+      # No network calls: the suite uses fixtures and local stubs only.
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  lint-shell:
+    name: Shell and config syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell script syntax
+        run: |
+          for script in $(git ls-files '*.sh'); do
+            bash -n "$script"
+          done
+
+      - name: Check JSON syntax
+        run: |
+          for file in $(git ls-files '*.json'); do
+            python -c "import json,sys; json.load(open(sys.argv[1]))" "$file"
+          done
+
+      - name: Check plist template renders and is valid XML
+        run: |
+          sed -e 's|__PROJECT_DIR__|/opt/market-brief|g' \
+              -e 's|__HOME__|/home/marketbrief|g' \
+              -e 's|__LABEL__|com.example.market-brief|g' \
+              launchd/com.example.market-brief.plist.template > /tmp/rendered.plist
+          python -c "import plistlib,sys; plistlib.load(open('/tmp/rendered.plist','rb'))"
+
+      - name: Assert the viewer still defaults to loopback
+        run: |
+          grep -q 'add_argument("--bind", default="127.0.0.1")' report_viewer.py
+
+      - name: Assert the viewer loads no external asset and runs no JavaScript
+        run: |
+          if grep -nE 'https?://[a-zA-Z0-9.-]+' report_viewer.py; then
+            echo "external URL found in viewer" >&2; exit 1
+          fi
+          if grep -nE '<script|onclick=|onload=|javascript:' report_viewer.py; then
+            echo "JavaScript found in viewer" >&2; exit 1
+          fi
+
+      - name: Assert no runtime artifacts are tracked
+        run: |
+          tracked=$(git ls-files out data logs state backups | grep -v '\.gitkeep$' || true)
+          if [ -n "$tracked" ]; then
+            echo "runtime artifacts are tracked:" >&2
+            echo "$tracked" >&2
+            exit 1
+          fi
+
+      - name: Assert no rendered plist or env file is tracked
+        run: |
+          tracked=$(git ls-files | grep -E '\.plist$|(^|/)\.env$|credentials\.' || true)
+          if [ -n "$tracked" ]; then
+            echo "credential-bearing file is tracked:" >&2
+            echo "$tracked" >&2
+            exit 1
+          fi

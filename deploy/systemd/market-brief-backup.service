@@ -1,0 +1,18 @@
+[Unit]
+Description=Back up the Market Brief SQLite history database
+
+[Service]
+Type=oneshot
+User=marketbrief
+Group=marketbrief
+WorkingDirectory=/opt/market-brief
+Environment=HOME=/home/marketbrief
+ExecStart=/opt/market-brief/.venv/bin/python /opt/market-brief/backup_sqlite.py --db /opt/market-brief/state/market_brief.sqlite3 --destination /var/backups/market-brief --keep-days 30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/market-brief/state /var/backups/market-brief
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Market Brief NYSE-aware windows every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=market-brief.service
+
+[Install]
+WantedBy=timers.target

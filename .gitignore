@@ -1,0 +1,61 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Python
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Credentials and secrets -- never commit real values.
+.env
+.env.*
+!.env.example
+credentials.env
+credentials.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+*.cookie
+*.session
+service-account*.json
+.secrets.baseline
+
+# Cloud / infrastructure state
+.gcloud/
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Rendered launchd plists contain absolute local paths.
+launchd/*.plist
+
+# Per-machine Claude Code settings contain local absolute paths.
+.claude/settings.local.json
+
+# Generated reports, raw model output and market data are local artifacts.
+out/**
+!out/.gitkeep
+data/**
+!data/.gitkeep
+logs/**
+!logs/.gitkeep
+state/**
+!state/.gitkeep
+backups/**
+!backups/.gitkeep
+cost*.log
