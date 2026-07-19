@@ -89,7 +89,7 @@ jobs:
 
       - name: Assert no rendered plist or env file is tracked
         run: |
-          tracked=$(git ls-files | grep -E '\.plist$|(^|/)\.env$|credentials\.' || true)
+          tracked=$(git ls-files | grep -E '\.plist$|(^|/)\.env(\.|$)|(^|/)credentials\.|\.(pem|key|p12|pfx)$' | grep -vE '\.example$|_credentials\.sh$' || true)
           if [ -n "$tracked" ]; then
             echo "credential-bearing file is tracked:" >&2
             echo "$tracked" >&2
