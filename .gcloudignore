@@ -1,0 +1,15 @@
+.gcloudignore
+.git/
+.gitignore
+.venv*/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.env
+credentials.*
+out/**
+data/**
+logs/**
+state/**
+backups/**
+cost*.log

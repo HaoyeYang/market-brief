@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Upload provider credentials from a workstation to a Compute Engine VM as
-# root-owned /etc/market-brief.env. Values are never printed; only key names are.
+# root-owned /etc/market-brief.credentials.env. Values are never printed; only
+# key names are. Operator configuration lives separately in /etc/market-brief.env
+# so that rotating provider keys never clobbers it; the systemd unit reads both.
 set -Eeuo pipefail
 
 : "${GCP_PROJECT_ID:?Set GCP_PROJECT_ID first}"
@@ -50,7 +52,7 @@ REMOTE_UPLOADED=1
   --project="$PROJECT_ID" --zone="$ZONE" --tunnel-through-iap
 "$GCLOUD" compute ssh "$INSTANCE" \
   --project="$PROJECT_ID" --zone="$ZONE" --tunnel-through-iap \
-  --command="set -e; chmod 600 '$REMOTE_TMP'; sudo install -o root -g root -m 600 '$REMOTE_TMP' /etc/market-brief.env; rm -f '$REMOTE_TMP'; sudo stat -c '%a %U:%G %n' /etc/market-brief.env; sudo awk -F= 'NF && \$1 !~ /^#/ {print \$1}' /etc/market-brief.env"
+  --command="set -e; chmod 600 '$REMOTE_TMP'; sudo install -o root -g root -m 600 '$REMOTE_TMP' /etc/market-brief.credentials.env; rm -f '$REMOTE_TMP'; sudo stat -c '%a %U:%G %n' /etc/market-brief.credentials.env; sudo awk -F= 'NF && \$1 !~ /^#/ {print \$1}' /etc/market-brief.credentials.env"
 REMOTE_UPLOADED=""
 
 if ! printf '%s\n' "$KEY_NAMES" | grep -qx NVIDIA_API_KEY; then

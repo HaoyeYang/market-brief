@@ -80,5 +80,16 @@ export GCP_INSTANCE=YOUR_INSTANCE_NAME   # defaults to market-brief
 Git, in a systemd unit, or in a launchd plist.
 
 The helper requires local mode `600`, uploads through IAP, installs the file as
-root-owned `/etc/market-brief.env`, removes the temporary copy, and prints only
-the key names. A later timer invocation reads the new values automatically.
+root-owned `/etc/market-brief.credentials.env`, removes the temporary copy, and
+prints only the key names. A later timer invocation reads the new values
+automatically.
+
+Provider keys and operator configuration are deliberately kept in two files:
+
+| File | Contents | Written by |
+| --- | --- | --- |
+| `/etc/market-brief.credentials.env` | API keys only | `sync_credentials.sh` |
+| `/etc/market-brief.env` | Timezone, runner choice, bucket, viewer URL | edited by hand |
+
+`market-brief.service` loads both, so rotating keys never clobbers operator
+configuration and editing configuration never risks printing a key.

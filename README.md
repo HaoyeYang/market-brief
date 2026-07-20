@@ -43,9 +43,25 @@ or human judgement.
   major-earnings calendars, then selects 6 agents on a quiet day and 9 on a normal
   day, adding dedicated agents on CPI/FOMC, payrolls, central-bank, and
   large-cap-tech days, up to a cap.
+- **Evidence-first research packet.** `research_pipeline.py` builds a bounded,
+  auditable evidence set before any research agent runs. Official calendars and
+  releases (BLS, BEA, Federal Reserve, Treasury, SEC, CFTC, CME) are first-class
+  evidence; GDELT is used only to *discover* candidate articles. An item becomes
+  publishable evidence only after its source page is actually fetched and a usable
+  excerpt is extracted, so an unreachable headline never becomes a citation.
+- **Provider-neutral specialist agents.** The portable chain runs four scoped
+  research agents — US equities, macro and rates, the AI/semiconductor chain, and
+  global cross-asset — followed by a source verifier, without depending on Claude
+  Code.
 - **Multi-provider model routing with fallback.** Claude Code subscription,
   Anthropic API, NVIDIA-hosted GLM, Z.AI GLM, and Moonshot Kimi, with documented
   transient-versus-auth retry semantics.
+- **Hybrid writer route.** `MARKET_BRIEF_WRITER=claude` keeps the free/cheap GLM
+  research tier and swaps only the writer for the Claude Code CLI on a
+  subscription login. Kimi remains the automatic fallback when OAuth expires,
+  quota runs out, or the Claude payload fails validation, and the writer strips
+  `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` first so a subscription run cannot
+  silently become a metered API charge.
 - **Publication gate.** Freshness, dating, source identity, excerpt presence, and
   claim support are all checked before a report is published atomically.
 - **SQLite history and change engine.** Day-over-day, 5-day, and 20-day changes
@@ -58,10 +74,21 @@ or human judgement.
 - **FINRA and CFTC positioning proxy.** Daily reported short-volume activity and
   weekly asset-manager / leveraged-fund net positioning, each labelled with its
   real meaning.
-- **Private read-only viewer.** A no-JavaScript HTML viewer bound to `127.0.0.1`
-  that escapes report text and loads no external asset.
+- **Private read-only viewer, now tabbed.** A no-JavaScript HTML viewer bound to
+  `127.0.0.1` that escapes report text and loads no external asset, split into
+  market overview, news and catalysts, macro calendar and central banks, options
+  and flow activity, and historical change plus agent scoring.
+- **Optional private mobile access.** `cloud_publish.py` uploads a deliberately
+  small, allowlisted, sanitized projection of a finished report to a private
+  Cloud Storage bucket, which a Cloud Run service mounts read-only behind IAP.
+  Raw market data, prompts, model traces, logs, SQLite, and credentials are never
+  uploaded, and the payload is scanned for secret markers before it leaves the
+  host.
+- **Verifier repair without a rerun.** `repair_verification.py` rebuilds a
+  malformed verifier packet from existing artifacts instead of re-invoking the
+  specialists and writer, so one bad JSON response does not cost a full run.
 - **launchd and systemd deployment.** Unit files, a five-minute zero-cost calendar
-  gate, a SQLite backup timer, and optional Telegram delivery.
+  gate, a SQLite backup timer, and optional Telegram or Gmail delivery.
 
 ---
 
@@ -72,15 +99,18 @@ flowchart TD
     A["Scheduler<br/>launchd / systemd timer · every 5 min"] --> B
     B["Market Clock<br/>market_clock.py · NYSE calendar, half-days, America/Chicago"] --> C
     B -->|"market closed or outside window"| Z(["Exit · no model call"])
-    C["Deterministic Data<br/>fetch_data.py · Yahoo, FRED, Tradier, FINRA, CFTC"] --> D
+    C["Deterministic Data<br/>fetch_data.py · Yahoo, FRED, Tradier, FINRA, CFTC"] --> R
+    R["Evidence Packet<br/>research_pipeline.py · official calendars · fetched excerpts"] --> D
     D["Dynamic Agent Router<br/>calendar-router · quiet / normal / high-impact"] --> E
     E["Research Agents<br/>news-scout · verifier · source-auditor · risk-challenger"] --> F
-    F["Writer<br/>rank → challenge → write"] --> G
+    F["Writer<br/>rank → challenge → write<br/>Kimi K3 or Claude subscription"] --> G
     G{"Verification &<br/>Publication Gate<br/>validate_report.py"}
     G -->|pass| H
     G -->|fail| Y(["out/*.FAILED.txt<br/>no publication"])
     H["Report · SQLite · Postmortem<br/>history_engine.py"] --> I
     I["Private Viewer<br/>report_viewer.py · 127.0.0.1 only"]
+    H -.->|"optional"| J["Sanitized Projection<br/>cloud_publish.py"]
+    J --> K["Private Cloud Run viewer<br/>GCS read-only · IAP"]
 ```
 
 The five-minute scheduler tick is free: it only runs the local NYSE-aware gate. A
@@ -148,8 +178,10 @@ is stored in this repository, and rendered plists are gitignored.
 ### Linux server
 
 See [`deploy/server/README.md`](deploy/server/README.md) for systemd units,
-backups, and the tunnelled viewer, and [`deploy/gcp/README.md`](deploy/gcp/README.md)
-for Google Cloud sizing notes.
+backups, the tunnelled viewer, and the optional Claude subscription writer;
+[`deploy/gcp/README.md`](deploy/gcp/README.md) for Google Cloud sizing and
+credential rotation; and [`deploy/cloudrun/README.md`](deploy/cloudrun/README.md)
+for the optional private mobile viewer behind IAP.
 
 ---
 
@@ -170,9 +202,19 @@ world-readable files.
 | **Z.AI GLM** | `ZAI_API_KEY`, optional `ZAI_BASE_URL` | Paid fallback, or the direct path when NVIDIA is unset. The global default endpoint is `https://api.z.ai/api/paas/v4`; set `ZAI_BASE_URL` to the China platform endpoint if the key came from there. |
 | **Moonshot / Kimi** | `MOONSHOT_API_KEY` | Second-stage writer in the portable chain. |
 | **Market data** (optional) | `TRADIER_TOKEN`, `TRADIER_BASE_URL`, `FRED_API_KEY` | Tradier upgrades options chains and greeks; without it Yahoo is a best-effort fallback. `FRED_API_KEY` only adds release-timestamp metadata. |
-| **Delivery** (optional) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Without them Linux writes status to the systemd journal and macOS uses Notification Center. |
+| **Writer route** (optional) | `MARKET_BRIEF_WRITER`, `MARKET_BRIEF_CLAUDE_MODEL`, `MARKET_BRIEF_CLAUDE_EFFORT`, `CLAUDE_BIN` | Defaults to `kimi`. Set `MARKET_BRIEF_WRITER=claude` to use the Claude Code CLI as the writer while keeping GLM research agents; Kimi stays as the automatic fallback, so keep `MOONSHOT_API_KEY` configured. |
+| **Research etiquette** (optional) | `MARKET_BRIEF_CONTACT` | An identifiable operator email sent as the crawler contact, as BLS and SEC fair-access policies request. Defaults to a placeholder; set a real address before running the pipeline at any volume. |
+| **Private mobile viewer** (optional) | `GCP_PROJECT_ID`, `MARKET_BRIEF_GCS_BUCKET`, `MARKET_BRIEF_WEB_URL` | Enables the sanitized Cloud Storage upload after a successful run. Unset means no upload happens at all. |
+| **Delivery** (optional) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GMAIL_SMTP_USER`, `GMAIL_APP_PASSWORD`, `MARKET_BRIEF_EMAIL_TO` | Without them Linux writes status to the systemd journal and macOS uses Notification Center. Gmail delivery requires a Google App Password, never the account password. |
 
 See [`.env.example`](.env.example) for the full template.
+
+Provider keys and operator configuration are kept in two separate root-owned
+files on a Linux deployment — `/etc/market-brief.credentials.env` for keys and
+`/etc/market-brief.env` for everything else — so that rotating a key never
+overwrites configuration. The systemd unit loads both. Do not `source` either
+file in a shell: they are parsed as dotenv / systemd `EnvironmentFile` data, and
+an unquoted App Password containing spaces is not shell-safe.
 
 ---
 
@@ -223,6 +265,15 @@ renders "direction not assessed" rather than coloring it as a market conclusion.
 - `deploy/gcp/sync_credentials.sh` prints key **names** only, requires local mode
   `600`, uploads through IAP, installs the file root-owned, and cleans up local
   and remote temporary files on any exit path.
+- **Cloud publication is allowlist-based, not filter-based.** `cloud_publish.py`
+  uploads only report Markdown, sanitized deterministic data, ranked catalysts,
+  audited evidence, historical comparisons, agent and source scores, and
+  aggregate usage. It drops known-sensitive keys, refuses payloads containing
+  secret markers or host paths, and never uploads raw data, prompts, model
+  traces, logs, SQLite, request IDs, or failure files. A `--dry-run` mode shows
+  exactly what would be published.
+- **The Cloud Run viewer must stay private.** Do not grant `allUsers` either the
+  Run Invoker or the IAP accessor role; the bucket is mounted read-only.
 
 See [`SECURITY.md`](SECURITY.md) for reporting and rotation guidance.
 
@@ -235,16 +286,20 @@ market_clock.py            NYSE calendar, half-days, America/Chicago window logi
 fetch_data.py              Deterministic cross-asset data collection
 derivatives_positioning.py Options, FINRA, and CFTC proxies
 history_engine.py          SQLite snapshots, 1/5/20-day changes, postmortem scoring
+research_pipeline.py       Official calendars + fetched-source evidence packet
 validate_report.py         Publication gate
-multi_provider_brief.py    Portable GLM + Kimi provider chain
-report_viewer.py           Private read-only HTTP viewer (127.0.0.1)
+multi_provider_brief.py    Portable GLM + Kimi/Claude provider chain
+repair_verification.py     Rebuild a malformed verifier packet without a rerun
+cloud_publish.py           Sanitized allowlist upload to a private GCS bucket
+report_viewer.py           Private read-only tabbed HTTP viewer (127.0.0.1)
 recover_workflow.py        Strict recovery from a completed workflow journal
 backup_sqlite.py           Online SQLite backup with integrity check
+notify.py                  Gmail / Telegram / macOS completion notification
 run.sh / run_portable.sh   Locking, gates, atomic publish, notification
 schedule.sh                Free five-minute calendar gate
 .claude/agents/            Research agent definitions
 .claude/workflows/         Workflow orchestration
-deploy/                    systemd units, server and GCP deployment docs
+deploy/                    systemd units, server, GCP, and Cloud Run docs
 launchd/                   macOS plist template (placeholders only)
 scripts/generate_demo.py   Synthetic demo fixture generator
 docs/                      Data source tiering and workflow design

@@ -2,7 +2,8 @@
 
 The server needs at least 4 GB RAM, persistent storage, Python 3.10+, `jq`, and
 outbound HTTPS. The default server backend uses NVIDIA/Z.AI GLM-5.2 followed by
-Kimi K3 and does not require Claude Code. The provided units run as the dedicated
+Kimi K3 and does not require Claude Code. An optional hybrid route keeps the GLM
+research tier and replaces only the writer with Claude Opus. The provided units run as the dedicated
 `marketbrief` user and never place secrets in the repository.
 
 ## 1. Copy from the workstation
@@ -31,29 +32,31 @@ does not overwrite an existing server database during later code updates.
 
 ## 2. Configure model providers
 
-Put `MOONSHOT_API_KEY`, `ZAI_API_KEY`, and optionally `NVIDIA_API_KEY` in
-`/etc/market-brief.env`. Never commit real key values to Git; `/etc/market-brief.env`
-lives outside the repository by design. NVIDIA is attempted first for GLM-5.2; five transient
+Put non-secret settings in `/etc/market-brief.env`. Store `MOONSHOT_API_KEY`,
+`ZAI_API_KEY`, and optionally `NVIDIA_API_KEY` in the separate root-only
+`/etc/market-brief.credentials.env`. NVIDIA is attempted first for GLM-5.2; five transient
 failures fall back to paid Z.AI. Authentication/validation errors fall back
 immediately because repeating a bad key cannot recover. Keep the file root-only:
 
 ```bash
 sudoedit /etc/market-brief.env
 sudo chmod 600 /etc/market-brief.env
+sudoedit /etc/market-brief.credentials.env
+sudo chmod 600 /etc/market-brief.credentials.env
 ```
 
 The systemd unit sets `MARKET_BRIEF_RUNNER=/opt/market-brief/run_portable.sh`.
-To deliberately use Claude instead, override that variable and then follow the
-Claude authentication notes below.
+Keep that runner for the hybrid route; set `MARKET_BRIEF_WRITER=claude` only
+after the dedicated service user has authenticated successfully.
 
-### Optional Claude backend
+### Optional Claude subscription writer
 
 Install Claude Code with Anthropic's current recommended native installer as
-the `marketbrief` user.  Then choose one unattended authentication route: an
-Anthropic API key, Amazon Bedrock, or Google Vertex AI.  This can differ from
-the Mac subscription login and changes billing.  Put only the selected values
-in `/etc/market-brief.env`; do not put secrets in this directory or a systemd
-unit.  Verify the executable path and update `CLAUDE_BIN` if needed:
+the `marketbrief` user, then run `claude` and choose the Claude account with
+subscription. Remote SSH login can be completed in a phone or workstation browser using
+the URL and code printed by the CLI. Never copy the workstation keychain or OAuth files
+to the VM. Verify that `authMethod` is `claude.ai`, then update the root-owned
+environment file:
 
 ```bash
 sudo -iu marketbrief
@@ -61,10 +64,35 @@ curl -fsSL https://claude.ai/install.sh | bash -s stable
 command -v claude
 claude --version
 claude doctor
+claude auth status --json
 exit
 sudoedit /etc/market-brief.env
 sudo chmod 600 /etc/market-brief.env
 ```
+
+Add these non-secret settings:
+
+```dotenv
+MARKET_BRIEF_WRITER=claude
+MARKET_BRIEF_CLAUDE_MODEL=opus
+MARKET_BRIEF_CLAUDE_EFFORT=high
+CLAUDE_BIN=/home/marketbrief/.local/bin/claude
+```
+
+The current `opus` alias resolved to `claude-opus-4-8` during acceptance, and
+the exact resolved model is persisted per run. Kimi remains the automatic
+fallback if OAuth expires, the subscription limit is reached, or the Claude
+payload fails validation. Keep `MOONSHOT_API_KEY` configured for that reason.
+Do not set `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` for this route: the
+writer deliberately strips both before launching Claude so a subscription run
+cannot silently become a Console API charge. Pro/Max usage is shared with the
+Claude apps and is best-effort rather than an API SLA; API/Bedrock/Vertex is
+still the stronger choice for unattended production guarantees.
+
+To switch the entire pipeline back to the original multi-agent Claude workflow
+instead of only replacing the writer, set
+`MARKET_BRIEF_RUNNER=/opt/market-brief/run.sh`. That route uses substantially
+more Claude subscription capacity than the hybrid route.
 
 ## 3. Test and enable
 
@@ -129,3 +157,29 @@ gcloud compute ssh YOUR_INSTANCE_NAME \
 Open <http://127.0.0.1:8080> locally. Closing the terminal closes the tunnel;
 the VM never exposes the viewer to the internet. The page is deliberately
 read-only and escapes report text rather than executing embedded HTML.
+
+### Phone access with Cloud Run IAP
+
+`deploy/cloudrun/` documents the private mobile viewer. A successful report
+invokes `cloud_publish.py`, which uploads only an allowlisted and sanitized
+projection to a private bucket. Cloud Run mounts the bucket read-only and IAP
+restricts the browser URL to explicitly authorized Google accounts.
+
+For Gmail completion delivery, set these values without committing them:
+
+```dotenv
+GMAIL_SMTP_USER=you@gmail.com
+GMAIL_APP_PASSWORD=your_16_digit_google_app_password
+MARKET_BRIEF_EMAIL_TO=you@gmail.com
+MARKET_BRIEF_WEB_URL=https://your-private-viewer.run.app
+```
+
+Use a Google App Password, not the account password. `notify.py` sends a plain
+text message with the IAP link and no tracking pixels. Cloud publication or
+mail failures are written to `logs/cloud-publish.log` and `logs/notify.log` and
+do not invalidate a report that already passed publication gates.
+
+Do not `source` either credentials file in a shell. They are parsed as dotenv
+or systemd `EnvironmentFile` data, and unquoted App Password spaces are not
+shell-safe. Use `deploy/gcp/sync_credentials.sh` for credential updates and let
+the systemd service load both environment files.

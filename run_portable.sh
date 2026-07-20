@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 # Provider-neutral production runner: deterministic data -> SQLite context ->
-# NVIDIA GLM-5.2 (five transient attempts) / paid Z.AI fallback -> Kimi K3.
+# NVIDIA GLM-5.2 (five transient attempts) / paid Z.AI fallback -> writer.
+# The writer defaults to Kimi; MARKET_BRIEF_WRITER=claude selects the official
+# Claude Code CLI (subscription login) with Kimi retained as automatic fallback.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT=${MARKET_BRIEF_PROJECT:-$SCRIPT_DIR}
 PY=${MARKET_BRIEF_PYTHON:-$PROJECT/.venv/bin/python}
@@ -22,6 +24,17 @@ BASE="$D.$MODE"
 STATE_DB="$PROJECT/state/market_brief.sqlite3"
 LOCK="$PROJECT/logs/.portable-run.lock"
 STAGE=""
+
+notify() {
+  "$PY" notify.py --status "$1" --message "$2" >> "$PROJECT/logs/notify.log" 2>&1 || true
+}
+
+publish_cloud() {
+  [ -n "${MARKET_BRIEF_GCS_BUCKET:-}" ] || return 0
+  local args=(--project-dir "$PROJECT" --bucket "$MARKET_BRIEF_GCS_BUCKET" --base "$BASE")
+  [ -n "${GCP_PROJECT_ID:-}" ] && args+=(--project-id "$GCP_PROJECT_ID")
+  "$PY" cloud_publish.py "${args[@]}" >> "$PROJECT/logs/cloud-publish.log" 2>&1
+}
 
 cleanup() {
   local rc=$?
@@ -45,7 +58,7 @@ fail() {
   } > "$tmp"
   mv "$tmp" "out/$BASE.FAILED.txt"
   echo "market-brief portable FAILED ($BASE): $reason" >&2
-  "$PY" notify.py --status FAILED --message "$BASE portable — $reason" >/dev/null 2>&1 || true
+  notify FAILED "$BASE portable — $reason"
   exit 1
 }
 
@@ -84,17 +97,21 @@ RAW="$STAGE/$BASE.raw.json"
 HISTORY="$STAGE/$BASE.history.json"
 "$PY" history_engine.py --db "$STATE_DB" context --data "$DATA" --out "$HISTORY" \
   2>> "$STAGE/stderr.log" || fail "historical comparison context failed"
+EVIDENCE="$STAGE/$BASE.evidence.json"
+"$PY" research_pipeline.py --data "$DATA" --out "$EVIDENCE" \
+  2>> "$STAGE/stderr.log" || fail "official calendar/news research failed"
 
 REFERENCE_ARGS=()
 if [ -e "out/latest.md" ]; then REFERENCE_ARGS=(--reference-report "out/latest.md"); fi
 "$PY" multi_provider_brief.py --date "$D" --mode "$MODE" --profile "$PROFILE" \
-  --data "$DATA" --history "$HISTORY" --out-dir "$STAGE" "${REFERENCE_ARGS[@]}" \
-  2>> "$STAGE/stderr.log" || fail "GLM/Kimi generation failed"
+  --data "$DATA" --history "$HISTORY" --evidence "$EVIDENCE" \
+  --out-dir "$STAGE" "${REFERENCE_ARGS[@]}" \
+  2>> "$STAGE/stderr.log" || fail "research/writer model generation failed"
 
 SHADOW="$D.$MODE.dual-shadow"
 REPORT="$STAGE/$SHADOW.md"
 RANK="$STAGE/$SHADOW.rank.json"
-RESEARCH="$STAGE/$SHADOW.glm-research.json"
+RESEARCH="$STAGE/$SHADOW.research.json"
 USAGE="$STAGE/$SHADOW.usage.json"
 "$PY" validate_report.py --report "$REPORT" --rank "$RANK" --data "$DATA" \
   --history "$HISTORY" --mode "$MODE" --profile "$PROFILE" \
@@ -104,7 +121,8 @@ mv "$DATA" "data/$BASE.json"
 mv "$RAW" "data/$BASE.raw.json"
 mv "$RANK" "out/$BASE.rank.json"
 mv "$HISTORY" "out/$BASE.history.json"
-mv "$RESEARCH" "out/$BASE.glm-research.json"
+mv "$RESEARCH" "out/$BASE.research.json"
+mv "$EVIDENCE" "out/$BASE.evidence.json"
 mv "$USAGE" "out/$BASE.run.json"
 "$PY" history_engine.py --db "$STATE_DB" ingest --data "data/$BASE.json" \
   --rank "out/$BASE.rank.json" --report "$REPORT" \
@@ -121,4 +139,8 @@ ln -sfn "$BASE.md" "out/latest.md"
 CHARS=$(wc -m < "out/$BASE.md" | tr -d ' ')
 COST=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("estimated_cost_usd", "unknown"))' "out/$BASE.run.json")
 echo "market-brief portable: wrote out/$BASE.md ($CHARS chars, estimated \$$COST)"
-"$PY" notify.py --status SUCCESS --message "$BASE portable — $CHARS chars, estimated \$$COST" >/dev/null 2>&1 || true
+if publish_cloud; then
+  notify SUCCESS "$BASE portable — $CHARS chars, estimated \$$COST"
+else
+  notify DELIVERY_FAILED "$BASE 已在服务器生成，但同步至手机查看器失败"
+fi
