@@ -61,6 +61,13 @@ a{color:inherit}.topbar{height:72px;display:flex;align-items:center;justify-cont
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0d1320;--panel:#141c2b;--panel-2:#192335;--ink:#eef3fc;--muted:#9aa8bd;--line:#263248;--accent:#7ba2ff;--accent-2:#39c9bd;--accent-soft:#1d2b4d;--shadow:0 18px 55px rgba(0,0,0,.25)}.topbar{background:rgba(14,20,32,.86)}.article p{color:#cbd5e6}.article code{background:#202b3d}.report-card:hover{border-color:#4f68a8}.badge.official{background:#14372f;border-color:#245b4d}.badge.shadow{background:#3a2b14;border-color:#66502a}.badge.failed{background:#3c1c25;border-color:#6a3040}.quality-flag.good-flag{background:#14372f;border-color:#245b4d}.guard-note{background:#302717;border-color:#544325;color:#e5c992}}
 """
 
+CSS += """
+.tabbar{display:flex;gap:7px;overflow-x:auto;padding:7px;background:var(--panel);border:1px solid var(--line);border-radius:16px;margin:-2px 0 20px;position:sticky;top:68px;z-index:8;box-shadow:0 10px 26px rgba(35,50,82,.08);scrollbar-width:none}.tabbar::-webkit-scrollbar{display:none}.tab{white-space:nowrap;text-decoration:none;color:var(--muted);font-size:11px;font-weight:760;padding:10px 13px;border-radius:11px}.tab:hover{background:var(--panel-2);color:var(--ink)}.tab.active{color:white;background:linear-gradient(120deg,#315bbb,#5e72d4)}
+.insight-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:18px}.insight-card,.event-card,.score-card{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:17px;box-shadow:0 7px 25px rgba(35,50,82,.035)}.insight-card span,.event-meta{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.insight-card strong{display:block;font-size:21px;margin-top:5px}.insight-card small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.content-stack{display:grid;gap:12px}.event-card h3{font-size:15px;line-height:1.4;margin:7px 0}.event-card p{font-size:12px;color:var(--muted);line-height:1.65;margin:0}.event-card a{color:var(--accent);text-decoration:none}.event-card a:hover{text-decoration:underline}.event-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px}.event-tag{font-size:9px;padding:4px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--line)}.section-shell{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px;margin-bottom:17px}.section-shell h2{font-size:19px;margin:0 0 5px}.section-shell>.section-note{font-size:11px;color:var(--muted);margin:0 0 16px}.calendar-list{display:grid;gap:8px}.calendar-row{display:grid;grid-template-columns:145px minmax(0,1fr) auto;gap:13px;align-items:center;padding:13px 0;border-top:1px solid var(--line)}.calendar-row:first-child{border-top:0}.calendar-time{font-size:10px;color:var(--muted)}.calendar-title{font-size:12px;font-weight:720}.calendar-source{font-size:9px;color:var(--accent);text-decoration:none}.catalyst-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px}.catalyst-card{background:var(--panel-2);border:1px solid var(--line);border-radius:15px;padding:15px}.catalyst-card h3{font-size:13px;margin:0 0 9px}.condition{font-size:10px;margin-top:8px}.condition b{display:block;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06em}.score-table{width:100%;border-collapse:collapse;font-size:11px}.score-table th,.score-table td{text-align:left;border-bottom:1px solid var(--line);padding:10px 8px}.score-table th{color:var(--muted);font-size:9px;text-transform:uppercase}.score-bar{height:7px;border-radius:5px;background:var(--line);overflow:hidden;min-width:90px}.score-bar i{display:block;height:100%;background:linear-gradient(90deg,#3c70d6,#32b6a6)}.empty-inline{padding:20px;background:var(--panel-2);border:1px dashed var(--line);border-radius:13px;color:var(--muted);font-size:11px;text-align:center}
+@media(max-width:760px){.tabbar{top:62px;margin-left:-4px;margin-right:-4px}.insight-grid{grid-template-columns:1fr 1fr}.calendar-row{grid-template-columns:100px minmax(0,1fr)}.calendar-source{grid-column:2}.catalyst-grid{grid-template-columns:1fr}.section-shell{padding:17px}.event-card{padding:15px}}
+@media(max-width:440px){.insight-grid{grid-template-columns:1fr 1fr}.insight-card{padding:13px}.insight-card strong{font-size:17px}}
+"""
+
 
 def visible_files(out_dir: Path) -> list[Path]:
     if not out_dir.is_dir():
@@ -130,6 +137,65 @@ def _data_for(report: Path) -> tuple[dict, Path | None]:
         if candidate.is_file():
             return _read_json(candidate), candidate
     return {}, None
+
+
+def _companion_for(report: Path, suffix: str) -> tuple[dict, Path | None]:
+    candidate = report.parent / f"{_artifact_base(report)}.{suffix}.json"
+    return (_read_json(candidate), candidate) if candidate.is_file() else ({}, None)
+
+
+TABS = (
+    ("overview", "市场总览"),
+    ("news", "全球新闻与催化剂"),
+    ("macro", "宏观日历与央行"),
+    ("options", "期权与资金活动"),
+    ("history", "历史变化与 Agent 评分"),
+)
+
+
+def _tab_nav(summary: dict, active: str) -> str:
+    links = "".join(
+        f'<a class="tab{" active" if key == active else ""}" '
+        f'href="/view/{key}/{quote(summary["name"])}">{label}</a>'
+        for key, label in TABS
+    )
+    return f'<nav class="tabbar" aria-label="报告视图">{links}</nav>'
+
+
+def _reader_header(summary: dict) -> str:
+    return (
+        f'<section class="reader-head"><a class="back" href="/">← 返回仪表盘</a>'
+        f'<h1>{html.escape(summary["title"])}</h1><div class="reader-meta">{_badge(summary)}'
+        f'<span>{summary["date"]}</span><span>·</span><span>{summary["mode"]}</span>'
+        f'<span>·</span><span>{summary["chars"]:,} characters</span></div></section>'
+    )
+
+
+def _display_time(value) -> str:
+    if not value:
+        return "时间未提供"
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.astimezone(CT).strftime("%m-%d %H:%M CT")
+    except ValueError:
+        return str(value)[:40]
+
+
+def _event_card(item: dict) -> str:
+    event_time = _display_time(item.get("event_time"))
+    published = _display_time(item.get("published_at"))
+    source = str(item.get("source_name") or item.get("source_domain") or "source")
+    title = html.escape(str(item.get("title") or "Untitled event"))
+    excerpt = html.escape(str(item.get("excerpt") or "该官方事件只提供了日历记录，尚无正文摘要。"))
+    url = html.escape(str(item.get("url") or "#"), quote=True)
+    tags = [str(item.get("source_tier") or "unknown"), str(item.get("kind") or "event")]
+    tags += [str(value) for value in item.get("angles", [])]
+    tag_html = "".join(f'<span class="event-tag">{html.escape(tag)}</span>' for tag in tags)
+    return (
+        f'<article class="event-card"><div class="event-meta">事件 {event_time} · 发布 {published}</div>'
+        f'<h3><a href="{url}" target="_blank" rel="noopener noreferrer">{title}</a></h3>'
+        f'<p>{excerpt}</p><div class="event-tags"><span class="event-tag">{html.escape(source)}</span>{tag_html}</div></article>'
+    )
 
 
 def _plain_excerpt(text: str, limit: int = 190) -> str:
@@ -564,8 +630,171 @@ def report_html(summary: dict) -> str:
     quality = "降级标记" if summary["degraded"] else "校验通过"
     visual = _visual_overview_html(summary.get("data") or {})
     data_state = "已连接" if summary.get("data_path") else "无配套快照"
-    body = f"""<main class="reader-wrap"><section class="reader-head"><a class="back" href="/">← 返回仪表盘</a><h1>{html.escape(summary['title'])}</h1><div class="reader-meta">{_badge(summary)}<span>{summary['date']}</span><span>·</span><span>{summary['mode']}</span><span>·</span><span>{summary['chars']:,} characters</span></div></section>{visual}<div class="longform-head"><div><h2>深度解读与证据链</h2><span>可视化帮助扫描，下面保留完整论证、来源、确认条件与失效条件</span></div></div><div class="reader-grid"><nav class="toc"><div class="toc-title">报告目录</div>{toc_html or '<span class="metric-note">无章节目录</span>'}</nav><article class="article">{article}</article><aside class="reader-side"><div class="toc-title">RUN SUMMARY</div><div class="mini-stat"><span>模型路由</span><strong>{html.escape(summary['route'])}</strong></div><div class="mini-stat"><span>Token</span><strong>{tokens}</strong></div><div class="mini-stat"><span>估算成本</span><strong>{cost}</strong></div><div class="mini-stat"><span>质量状态</span><strong>{quality}</strong></div><div class="mini-stat"><span>确定性快照</span><strong>{data_state}</strong></div><a class="raw-link" href="/file/{quote(summary['name'])}?raw=1">查看原始 Markdown</a></aside></div></main>"""
+    body = f"""<main class="reader-wrap">{_reader_header(summary)}{_tab_nav(summary, 'overview')}{visual}<div class="longform-head"><div><h2>深度解读与证据链</h2><span>可视化帮助扫描，下面保留完整论证、来源、确认条件与失效条件</span></div></div><div class="reader-grid"><nav class="toc"><div class="toc-title">报告目录</div>{toc_html or '<span class="metric-note">无章节目录</span>'}</nav><article class="article">{article}</article><aside class="reader-side"><div class="toc-title">RUN SUMMARY</div><div class="mini-stat"><span>模型路由</span><strong>{html.escape(summary['route'])}</strong></div><div class="mini-stat"><span>Token</span><strong>{tokens}</strong></div><div class="mini-stat"><span>估算成本</span><strong>{cost}</strong></div><div class="mini-stat"><span>质量状态</span><strong>{quality}</strong></div><div class="mini-stat"><span>确定性快照</span><strong>{data_state}</strong></div><a class="raw-link" href="/file/{quote(summary['name'])}?raw=1">查看原始 Markdown</a></aside></div></main>"""
     return _page(summary["title"], body)
+
+
+def news_html(summary: dict) -> str:
+    research, _ = _companion_for(summary["path"], "research")
+    if not research:
+        research, _ = _companion_for(summary["path"], "evidence")
+    evidence_items = research.get("evidence", []) if isinstance(research, dict) else []
+    rank = summary.get("rank") or {}
+    route = research.get("route") or rank.get("route") or {}
+    coverage = research.get("coverage") or {}
+    cards = "".join(_event_card(item) for item in evidence_items[:50])
+    if not cards:
+        cards = '<div class="empty-inline">这份旧报告没有联网证据包；下一次自动运行会开始显示官方来源与已审计新闻。</div>'
+    catalysts = (rank.get("rank") or {}).get("catalysts", [])
+    catalyst_html = "".join(
+        f'<article class="catalyst-card"><h3>{html.escape(str(item.get("name") or "未命名催化剂"))}</h3>'
+        f'<div class="condition"><b>确认条件</b>{html.escape(str(item.get("confirm_condition") or "—"))}</div>'
+        f'<div class="condition"><b>失效条件</b>{html.escape(str(item.get("invalidate_condition") or "—"))}</div>'
+        f'<div class="event-tags"><span class="event-tag">{int(item.get("horizon_days") or 5)}D</span></div></article>'
+        for item in catalysts
+    ) or '<div class="empty-inline">暂无机器可评分的催化剂。</div>'
+    agents = route.get("active_agents") or []
+    metrics = (
+        ("日型", str(route.get("day_type") or "历史版本"), "Calendar Router"),
+        ("官方证据", str(coverage.get("official", 0)), "BLS · BEA · Fed · Treasury · SEC"),
+        ("媒体原文", str(coverage.get("source_fetched", 0)), "聚合标题不计入"),
+        ("活跃 Agents", str(len(agents)), " · ".join(agents) or "旧报告未记录"),
+    )
+    metric_html = "".join(
+        f'<div class="insight-card"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong><small>{html.escape(note)}</small></div>'
+        for label, value, note in metrics
+    )
+    body = (
+        f'<main class="reader-wrap">{_reader_header(summary)}{_tab_nav(summary, "news")}'
+        f'<section class="insight-grid">{metric_html}</section>'
+        f'<section class="section-shell"><h2>全球新闻与已审计证据</h2><p class="section-note">按事件/发布时间展示；只有成功读取原文或官方 API 的项目才进入证据链。</p><div class="content-stack">{cards}</div></section>'
+        f'<section class="section-shell"><h2>未来催化剂与可证伪条件</h2><p class="section-note">这些条件将在第 1 和第 5 个交易日由事后评分器复核。</p><div class="catalyst-grid">{catalyst_html}</div></section></main>'
+    )
+    return _page(f"全球新闻 · {summary['date']}", body)
+
+
+def macro_html(summary: dict) -> str:
+    research, _ = _companion_for(summary["path"], "research")
+    if not research:
+        research, _ = _companion_for(summary["path"], "evidence")
+    evidence_items = research.get("evidence", []) if isinstance(research, dict) else []
+    macro_items = [
+        item for item in evidence_items
+        if item.get("kind") in {"macro_calendar", "central_bank_calendar", "treasury_auction", "official_release"}
+        or set(item.get("angles", [])) & {"inflation", "employment", "fomc", "treasury"}
+    ]
+    rows = "".join(
+        f'<div class="calendar-row"><span class="calendar-time">{html.escape(_display_time(item.get("event_time") or item.get("published_at")))}</span>'
+        f'<span class="calendar-title">{html.escape(str(item.get("title") or "Event"))}</span>'
+        f'<a class="calendar-source" href="{html.escape(str(item.get("url") or "#"), quote=True)}" target="_blank" rel="noopener noreferrer">{html.escape(str(item.get("source_name") or "source"))} ↗</a></div>'
+        for item in macro_items[:50]
+    ) or '<div class="empty-inline">旧报告没有宏观日历包；下一次自动运行会显示未来 1–5 个交易日事件。</div>'
+    data = summary.get("data") or {}
+    macro = data.get("macro") or {}
+    released_cards = []
+    for key, item in list(macro.items())[:14]:
+        released = item.get("released") or {}
+        values = [value for value in released.values() if isinstance(value, (int, float))]
+        value = _format_market_number(values[0], 2) if values else "—"
+        released_cards.append(
+            f'<div class="insight-card"><span>{html.escape(str(key))}</span><strong>{value}</strong>'
+            f'<small>{html.escape(str(item.get("ref_period") or "最近已公布值"))} · 不等同预期</small></div>'
+        )
+    rates = data.get("rates") or {}
+    rate_cards = "".join(
+        f'<div class="insight-card"><span>{html.escape(key)}</span><strong>{_format_market_number((item or {}).get("last"), 2)}%</strong>'
+        f'<small>{_format_market_number((item or {}).get("chg_bp"), 1)} bp</small></div>'
+        for key, item in rates.items()
+    )
+    body = (
+        f'<main class="reader-wrap">{_reader_header(summary)}{_tab_nav(summary, "macro")}'
+        f'<section class="section-shell"><h2>宏观数据与利率快照</h2><p class="section-note">实际值/前值来自确定性数据；预期值仅在已审计来源提供时展示。</p><div class="insight-grid">{"".join(released_cards)}{rate_cards}</div></section>'
+        f'<section class="section-shell"><h2>宏观日历、Fed 与 Treasury</h2><p class="section-note">统一换算为 America/Chicago；点击可回到官方或原始发布页面。</p><div class="calendar-list">{rows}</div></section></main>'
+    )
+    return _page(f"宏观日历 · {summary['date']}", body)
+
+
+def options_html(summary: dict) -> str:
+    data = summary.get("data") or {}
+    symbols = ((data.get("options") or {}).get("symbols") or {})
+    option_cards = []
+    for symbol, detail in symbols.items():
+        short = ((detail.get("buckets") or {}).get("short_dated") or {})
+        if not short:
+            continue
+        option_cards.append(
+            f'<article class="option-card"><div class="option-head"><strong>{html.escape(symbol)}</strong><span>{html.escape(str(short.get("expiration") or "—"))}</span></div>'
+            f'<div class="option-move">{_format_market_number(short.get("atm_straddle_implied_move_pct"), 2)}% <small>ATM IMPLIED MOVE</small></div>'
+            f'<div class="option-facts"><div class="option-fact"><span>PUT/CALL VOLUME</span><strong>{_format_market_number(short.get("put_call_volume_ratio"), 2)}</strong></div>'
+            f'<div class="option-fact"><span>DOWNSIDE−UPSIDE IV</span><strong>{_format_market_number(short.get("downside_minus_upside_iv"), 3)}</strong></div>'
+            f'<div class="option-fact"><span>CALL WALL</span><strong>{_format_market_number(short.get("call_wall_strike_by_oi"), 1)}</strong></div>'
+            f'<div class="option-fact"><span>PUT WALL</span><strong>{_format_market_number(short.get("put_wall_strike_by_oi"), 1)}</strong></div></div></article>'
+        )
+    finra = (((data.get("positioning") or {}).get("finra_short_volume") or {}).get("symbols") or {})
+    activity = "".join(
+        f'<div class="activity-row"><strong>{html.escape(symbol)}</strong><div class="activity-track"><div class="activity-fill" style="width:{max(0,min(100,float(item.get("short_volume_ratio") or 0)*100)):.1f}%"></div></div><span>{float(item.get("short_volume_ratio") or 0)*100:.1f}%</span></div>'
+        for symbol, item in finra.items() if isinstance(item, dict) and isinstance(item.get("short_volume_ratio"), (int, float))
+    )
+    cftc = (((data.get("positioning") or {}).get("cftc_cot") or {}).get("markets") or {})
+    cot = "".join(
+        f'<div class="cot-card"><strong>{html.escape(name)}</strong><div class="cot-pair"><span>资产管理<b>{_format_market_number(item.get("asset_manager_net_pct_oi"),1)}%</b></span><span>杠杆资金<b>{_format_market_number(item.get("leveraged_money_net_pct_oi"),1)}%</b></span></div></div>'
+        for name, item in cftc.items() if isinstance(item, dict)
+    )
+    option_html = "".join(option_cards) or '<div class="empty-inline">暂无期权快照</div>'
+    activity_html = activity or "无数据"
+    cot_html = cot or "无数据"
+    body = (
+        f'<main class="reader-wrap">{_reader_header(summary)}{_tab_nav(summary, "options")}'
+        f'<section class="section-shell"><h2>短期限期权活动</h2><p class="section-note">观察隐含区间、put/call 与 OI 集中；免费源无 SLA，成交量不代表买卖方向。</p><div class="option-grid">{option_html}</div><div class="guard-note"><strong>边界</strong><span>未推断 dealer inventory 或 Gamma Exposure；Open Interest 属于上一清算周期。</span></div></section>'
+        f'<section class="section-shell"><h2>资金活动代理</h2><p class="section-note">FINRA 是日频 short-volume activity；CFTC 是周频期货仓位。两者均不是 ETF 净申赎或全市场资金净流入。</p><div class="position-grid"><div><div class="toc-title">FINRA SHORT VOLUME</div><div class="activity-list">{activity_html}</div></div><div><div class="toc-title">CFTC NET % OI</div><div class="cot-grid">{cot_html}</div></div></div></section></main>'
+    )
+    return _page(f"期权与资金 · {summary['date']}", body)
+
+
+def history_html(summary: dict) -> str:
+    history, _ = _companion_for(summary["path"], "history")
+    # history.json is captured before the current run is ingested; metrics.json
+    # is refreshed after ingest and therefore owns the latest scorecard.
+    quality = _read_json(summary["path"].parent / "metrics.json") or history.get("quality_metrics") or {}
+    comparison_html = []
+    for label in ("1d", "5d", "20d"):
+        item = (history.get("comparisons") or {}).get(label, {})
+        changes = item.get("changes", [])
+        if not item.get("available"):
+            content = '<div class="empty-inline">样本尚不足；数据库会在每日运行后自动积累。</div>'
+        else:
+            rows = "".join(
+                f'<tr><td>{html.escape(str(change.get("key") or ""))}</td><td>{_format_market_number(change.get("prior"), 3)}</td><td>{_format_market_number(change.get("current"), 3)}</td><td>{_format_market_number(change.get("absolute_change"), 3)}</td></tr>'
+                for change in changes[:14]
+            )
+            content = f'<table class="score-table"><thead><tr><th>Series</th><th>Prior</th><th>Current</th><th>Δ</th></tr></thead><tbody>{rows}</tbody></table>'
+        comparison_html.append(
+            f'<section class="section-shell"><h2>相对 {label}</h2><p class="section-note">比较基准：{html.escape(str(item.get("prior_date") or "尚未建立"))}</p>{content}</section>'
+        )
+
+    agents = quality.get("agents", []) if isinstance(quality, dict) else []
+    agent_rows = "".join(
+        f'<tr><td>{html.escape(str(item.get("angle") or item.get("name") or "unknown"))}</td><td>{int(item.get("scouted") or 0)}</td><td>{int(item.get("source_confirmed") or 0)}</td><td>{int(item.get("ranked_points") or 0)}</td><td><div class="score-bar"><i style="width:{max(0,min(100,float(item.get("source_confirm_rate") or 0)*100)):.1f}%"></i></div></td></tr>'
+        for item in agents
+    ) or '<tr><td colspan="5">至少完成一次新工作流后开始显示评分。</td></tr>'
+    by_agent = quality.get("postmortem_by_agent", []) if isinstance(quality, dict) else []
+    outcome_parts = []
+    for item in by_agent:
+        score = "—" if item.get("value_score") is None else f'{float(item.get("value_score")) * 100:.0f}%'
+        outcome_parts.append(
+            f'<tr><td>{html.escape(str(item.get("name") or "unknown"))}</td>'
+            f'<td>{int(item.get("confirmed") or 0)}</td><td>{int(item.get("mixed") or 0)}</td>'
+            f'<td>{int(item.get("invalidated") or 0)}</td><td>{score}</td></tr>'
+        )
+    outcome_rows = "".join(outcome_parts) or '<tr><td colspan="5">1日/5日催化剂到期后开始形成价值分。</td></tr>'
+    score_sections = (
+        '<section class="section-shell"><h2>Agent 来源确认率</h2><p class="section-note">统计哪些 agents 的 claims 被来源验证器支持并进入最终排名。</p>'
+        f'<table class="score-table"><thead><tr><th>Agent</th><th>Scouted</th><th>Confirmed</th><th>Ranked</th><th>Rate</th></tr></thead><tbody>{agent_rows}</tbody></table></section>'
+        '<section class="section-shell"><h2>1日 / 5日事后价值评分</h2><p class="section-note">confirmed=1，mixed=0.5，invalidated=0；not_evaluable 不进入分母。</p>'
+        f'<table class="score-table"><thead><tr><th>Agent</th><th>Confirmed</th><th>Mixed</th><th>Invalidated</th><th>Value</th></tr></thead><tbody>{outcome_rows}</tbody></table></section>'
+    )
+    body = f'<main class="reader-wrap">{_reader_header(summary)}{_tab_nav(summary, "history")}{"".join(comparison_html)}{score_sections}</main>'
+    return _page(f"历史与评分 · {summary['date']}", body)
 
 
 def artifact_html(path: Path) -> str:
@@ -595,6 +824,19 @@ def handler_for(out_dir: Path):
                 if path is None or path.suffix != ".md" or path.name.endswith(".full.md"):
                     return self.send_error(404)
                 return self._send(report_html(report_summary(path)).encode(), "text/html; charset=utf-8")
+            if parsed.path.startswith("/view/"):
+                parts = parsed.path.split("/", 3)
+                if len(parts) != 4 or parts[2] not in {key for key, _ in TABS}:
+                    return self.send_error(404)
+                path = resolve_visible(out_dir, unquote(parts[3]))
+                if path is None or path.suffix != ".md" or path.name.endswith(".full.md"):
+                    return self.send_error(404)
+                summary = report_summary(path)
+                renderer = {
+                    "overview": report_html, "news": news_html, "macro": macro_html,
+                    "options": options_html, "history": history_html,
+                }[parts[2]]
+                return self._send(renderer(summary).encode(), "text/html; charset=utf-8")
             if parsed.path.startswith("/file/"):
                 path = resolve_visible(out_dir, unquote(parsed.path.removeprefix("/file/")))
                 if path is None:

@@ -13,6 +13,7 @@ Environment=TZ=America/Chicago
 Environment=MARKET_BRIEF_PROJECT=/opt/market-brief
 Environment=MARKET_BRIEF_RUNNER=/opt/market-brief/run_portable.sh
 EnvironmentFile=-/etc/market-brief.env
+EnvironmentFile=-/etc/market-brief.credentials.env
 ExecStart=/opt/market-brief/schedule.sh
 TimeoutStartSec=45min
 Nice=5

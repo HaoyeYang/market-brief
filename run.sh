@@ -65,7 +65,14 @@ COST_LOGGED=0
 command -v jq >/dev/null || { echo "market-brief: jq is required" >&2; exit 1; }
 
 notify() {
-  "$PY" notify.py --status "$1" --message "$2" >/dev/null 2>&1 || true
+  "$PY" notify.py --status "$1" --message "$2" >> "$PROJECT/logs/notify.log" 2>&1 || true
+}
+
+publish_cloud() {
+  [ -n "${MARKET_BRIEF_GCS_BUCKET:-}" ] || return 0
+  local args=(--project-dir "$PROJECT" --bucket "$MARKET_BRIEF_GCS_BUCKET" --base "$BASE")
+  [ -n "${GCP_PROJECT_ID:-}" ] && args+=(--project-id "$GCP_PROJECT_ID")
+  "$PY" cloud_publish.py "${args[@]}" >> "$PROJECT/logs/cloud-publish.log" 2>&1
 }
 
 run_with_timeout() {
@@ -334,4 +341,8 @@ append_cost success
 DEG=$(jq -r 'if .degraded then " [DEGRADED]" else "" end' "out/$BASE.rank.json")
 write_status success "publication gates passed" "out/$BASE.md"
 echo "market-brief: wrote out/$BASE.md ($GOT chars, ${DURATION}s)$DEG"
-notify SUCCESS "$BASE — ${GOT} chars, ${DURATION}s$DEG"
+if publish_cloud; then
+  notify SUCCESS "$BASE — ${GOT} chars, ${DURATION}s$DEG"
+else
+  notify DELIVERY_FAILED "$BASE 已在服务器生成，但同步至手机查看器失败"
+fi

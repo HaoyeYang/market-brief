@@ -3,8 +3,9 @@ import unittest
 from pathlib import Path
 
 from report_viewer import (
-    dashboard_html, markdown_to_html, report_files, report_html, report_summary,
-    resolve_visible, visible_files,
+    dashboard_html, history_html, macro_html, markdown_to_html, news_html,
+    options_html, report_files, report_html, report_summary, resolve_visible,
+    visible_files,
 )
 
 
@@ -102,6 +103,33 @@ class ReportViewerTests(unittest.TestCase):
             rendered = report_html(report_summary(report))
             self.assertIn("没有配套的确定性数据文件", rendered)
             self.assertIn("无快照", rendered)
+
+    def test_five_tabs_render_curated_companions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out, data = root / "out", root / "data"
+            out.mkdir(); data.mkdir()
+            base = "2026-07-19.intraday"
+            report = out / f"{base}.md"
+            report.write_text("# 盘中报告\n\n## 核心观点\n测试。")
+            (data / f"{base}.json").write_text('{"options":{"symbols":{}},"positioning":{},"macro":{},"rates":{}}')
+            (out / f"{base}.research.json").write_text(
+                '{"route":{"day_type":"normal","active_agents":["news_scout"]},'
+                '"coverage":{"official":1},"evidence":[{"id":"ev-1","kind":"macro_calendar",'
+                '"title":"CPI release","source_name":"BLS","source_tier":"official",'
+                '"url":"https://www.bls.gov/cpi/","event_time":"2026-07-21T12:30:00+00:00"}]}'
+            )
+            (out / f"{base}.history.json").write_text(
+                '{"comparisons":{"1d":{"available":false},"5d":{"available":false},'
+                '"20d":{"available":false}},"quality_metrics":{"agents":[]}}'
+            )
+            summary = report_summary(report)
+            pages = [report_html(summary), news_html(summary), macro_html(summary), options_html(summary), history_html(summary)]
+            for page in pages:
+                for label in ("市场总览", "全球新闻与催化剂", "宏观日历与央行", "期权与资金活动", "历史变化与 Agent 评分"):
+                    self.assertIn(label, page)
+            self.assertIn("CPI release", pages[1])
+            self.assertIn("BLS", pages[2])
 
 
 if __name__ == "__main__":

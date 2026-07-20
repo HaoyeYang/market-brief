@@ -7,8 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from multi_provider_brief import (
-    ProviderError, estimated_cost, extract_json, load_credentials,
-    normalize_report_headings, run,
+    ProviderError, call_claude_writer, estimated_cost, extract_json, load_credentials,
+    normalize_agent_packet, normalize_report_headings,
+    normalize_verification_packet, run,
 )
 
 
@@ -47,6 +48,23 @@ class MultiProviderBriefTests(unittest.TestCase):
     def test_extracts_fenced_json(self):
         self.assertEqual(extract_json("```json\n{\"a\": 1}\n```"), {"a": 1})
 
+    def test_reasoning_prefix_selects_outer_not_last_nested_json(self):
+        packet = extract_json('thinking...\n{"claims":[{"claim":"x"}],"gaps":[]}')
+        self.assertEqual(packet["claims"][0]["claim"], "x")
+        self.assertIn("gaps", packet)
+
+    def test_single_claim_packets_are_normalized(self):
+        agent = normalize_agent_packet({"claim": "x", "evidence_ids": ["ev-1"]}, "macro_rates")
+        verifier = normalize_verification_packet({"claim": "x", "status": "supported"})
+        self.assertEqual(agent["claims"][0]["claim"], "x")
+        self.assertEqual(verifier["verified_claims"][0]["status"], "supported")
+
+    def test_invalid_mixed_claim_status_is_downgraded_to_unclear(self):
+        verifier = normalize_verification_packet({
+            "verified_claims": [{"claim": "partly supported", "status": "mixed"}],
+        })
+        self.assertEqual(verifier["verified_claims"][0]["status"], "unclear")
+
     def test_normalizes_split_required_headings(self):
         report = "## 宏观\nA\n## 外汇\nB\n## 信用\nC"
         normalized = normalize_report_headings(report)
@@ -60,6 +78,70 @@ class MultiProviderBriefTests(unittest.TestCase):
             "prompt_tokens_details": {"cached_tokens": 100},
         }
         self.assertEqual(estimated_cost("zai-paid", usage), 0.010086)
+
+    def test_claude_writer_uses_subscription_safe_cli_and_records_resolved_model(self):
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen["command"] = command
+            seen["env"] = kwargs["env"]
+            return SimpleNamespace(
+                returncode=0, stderr="",
+                stdout=json.dumps({
+                    "is_error": False, "result": '{"ok":true}',
+                    "session_id": "session-test", "permission_denials": [],
+                    "total_cost_usd": 0.25,
+                    "modelUsage": {
+                        "claude-opus-4-8": {
+                            "inputTokens": 10, "outputTokens": 20,
+                            "cacheReadInputTokens": 30, "cacheCreationInputTokens": 40,
+                        },
+                    },
+                }),
+            )
+
+        with patch.dict(os.environ, {
+            "ANTHROPIC_API_KEY": "must-not-leak",
+            "ANTHROPIC_AUTH_TOKEN": "must-not-leak",
+            "CLAUDE_CODE_OAUTH_TOKEN": "subscription-token",
+        }):
+            response = call_claude_writer(
+                messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "user"}],
+                claude_bin="/usr/bin/true", run_command=fake_run,
+            )
+        self.assertIn("--safe-mode", seen["command"])
+        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"])
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", seen["env"])
+        self.assertEqual(seen["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "subscription-token")
+        self.assertEqual(response["model"], "claude-opus-4-8")
+        self.assertEqual(response["api_equivalent_cost_usd"], 0.25)
+
+    def test_claude_writer_failure_falls_back_to_kimi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data.json").write_text(json.dumps({
+                "date": "2026-07-19", "mode": "intraday", "run_context": {"is_session": False},
+            }))
+            (root / "history.json").write_text("{}")
+            creds = root / "credentials.env"
+            creds.write_text("MOONSHOT_API_KEY=kimi-secret\nZAI_API_KEY=glm-secret\n")
+            creds.chmod(0o600)
+            session = FakeSession([
+                FakeResponse({"ranked_findings": [{"point": "x"}]}),
+                FakeResponse(self._final_payload()),
+            ])
+            args = self._args(root, creds)
+            args.writer = "claude"
+            args.claude_bin = "/usr/bin/true"
+            with patch(
+                "multi_provider_brief.call_claude_writer",
+                side_effect=ProviderError("subscription quota exhausted"),
+            ):
+                paths = run(args, session=session)
+            usage = json.loads(Path(paths["usage"]).read_text())
+            self.assertEqual(usage["writer_route"]["selected"], "kimi")
+            self.assertTrue(usage["writer_route"]["fallback_used"])
+            self.assertEqual(usage["providers"]["writer"]["provider"], "kimi")
 
     def test_one_call_per_provider_and_no_secret_in_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,12 +241,61 @@ class MultiProviderBriefTests(unittest.TestCase):
             self.assertEqual(usage["glm_route"]["attempts"], 5)
             self.assertEqual(usage["glm_route"]["selected"], "zai-paid")
 
+    def test_audited_evidence_enables_routed_agents_and_postmortem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data.json").write_text(json.dumps({
+                "date": "2026-07-19", "mode": "intraday", "run_context": {"is_session": False},
+            }))
+            (root / "history.json").write_text(json.dumps({
+                "pending_evaluations": [{"catalyst_id": "old-1", "horizon": 1}],
+            }))
+            (root / "evidence.json").write_text(json.dumps({
+                "route": {"day_type": "normal", "active_agents": ["us_equities", "macro_rates", "source_verifier"]},
+                "coverage": {"official": 1},
+                "evidence": [{
+                    "id": "ev-1", "url": "https://www.bls.gov/test", "source_tier": "official",
+                    "excerpt": "official evidence", "published_at": "2026-07-19T12:00:00+00:00",
+                }],
+            }))
+            creds = root / "credentials.env"
+            creds.write_text("MOONSHOT_API_KEY=kimi-secret\nZAI_API_KEY=glm-secret\n")
+            creds.chmod(0o600)
+            agent_one = {"agent": "us_equities", "claims": [{"claim": "x", "evidence_ids": ["ev-1"]}]}
+            agent_two = {"agent": "macro_rates", "claims": [{"claim": "y", "evidence_ids": ["ev-1"]}]}
+            verifier = {
+                "verified_claims": [{
+                    "claim": "x", "agent": "us_equities", "status": "supported",
+                    "evidence_ids": ["ev-1"], "reason": "direct",
+                }],
+                "postmortem_results": [{
+                    "catalyst_id": "old-1", "horizon": 1, "verdict": "confirmed",
+                    "reason": "met", "evidence_keys": ["ev-1"],
+                }],
+            }
+            session = FakeSession([
+                FakeResponse(agent_one), FakeResponse(agent_two), FakeResponse(verifier),
+                FakeResponse(self._final_payload()),
+            ])
+            args = self._args(root, creds)
+            args.evidence = str(root / "evidence.json")
+            paths = run(args, session=session)
+            self.assertEqual(len(session.calls), 4)
+            research = json.loads(Path(paths["research"]).read_text())
+            rank = json.loads(Path(paths["rank"]).read_text())
+            self.assertEqual(len(research["agents"]), 2)
+            self.assertEqual(rank["postmortem"]["results"][0]["verdict"], "confirmed")
+            self.assertEqual(rank["confirmed_claims"][0]["url"], "https://www.bls.gov/test")
+            self.assertFalse(rank["degraded"])
+
     def _args(self, root, creds):
         return SimpleNamespace(
             date="2026-07-19", mode="intraday", data=str(root / "data.json"),
             history=str(root / "history.json"), reference_report=None,
             out_dir=str(root / "out"), credentials=str(creds), dry_run=False,
             glm_max_tokens=12000, nvidia_max_tokens=16384, kimi_max_tokens=20000,
+            writer="kimi", claude_bin="claude", claude_model="opus",
+            claude_effort="high", claude_timeout=900,
         )
 
     def _final_payload(self):

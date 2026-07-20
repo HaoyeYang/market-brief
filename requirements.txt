@@ -1,4 +1,6 @@
 yfinance==1.2.0
 requests==2.32.5
+beautifulsoup4==4.15.0
 pandas==2.3.3
 exchange-calendars==4.5.6
+google-cloud-storage==3.13.0
