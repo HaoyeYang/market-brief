@@ -28,7 +28,7 @@ def validate(report: str, rank_payload: dict, data: dict,
              mode: str, profile: str, history: dict | None = None) -> list[str]:
     errors: list[str] = []
     char_count = len(report.strip())
-    min_chars = 2000 if profile == "deep" else 1200
+    min_chars = 4200 if profile == "deep" else 2800
     if char_count < min_chars:
         errors.append(f"report too short: {char_count} < {min_chars} chars")
     if char_count > 14000:
